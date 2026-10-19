@@ -2,12 +2,18 @@
 import math
 from collections import deque
 import heapq
+from logic_engine import KnowledgeBase
 
 class SearchAgent:
     def __init__(self):
         self.plan = []
         # LAB 4 TASK: Now set to AStar!
-        self.active_algo = 'AStar' 
+        self.active_algo = 'AStar'
+        # LAB 7 TASK: Logic Engine Initialization
+        self.kb = KnowledgeBase()
+        # Define Domain Rules
+        self.kb.tell_rule(['TargetVisible', 'HasDust'], 'SafeToEngage')
+        self.kb.tell_rule(['SafeToEngage', 'BloodseekerMissing'], 'Retreat')
 
     def sense_and_act(self, percept):
         if not self.plan and percept['all_food']:
@@ -21,15 +27,21 @@ class SearchAgent:
             walls = set(percept['walls'])
             grid_size = percept['grid_size']
 
+            # LAB 7 TASK: Sample tile facts for logical reasoning & feasibility
+            tile_facts = {
+                (1, 0): ['TargetVisible', 'HasDust', 'BloodseekerMissing'],  # deduces Retreat: blocked
+                (0, 1): ['TargetVisible', 'HasDust'],                        # SafeToEngage only: allowed
+            }
+
             if self.active_algo == 'BFS':
                 self.plan = self.bfs_search(start, closest_food, walls, grid_size)
             elif self.active_algo == 'DFS':
                 self.plan = self.dfs_search(start, closest_food, walls, grid_size)
             elif self.active_algo == 'UCS':
                 self.plan = self.ucs_search(start, closest_food, walls, grid_size)
-            # LAB 4 NEW: A* Execution
+            # LAB 4 NEW: A* Execution (Enhanced with Lab 7 Feasibility)
             elif self.active_algo == 'AStar':
-                self.plan = self.astar_search(start, closest_food, walls, grid_size)
+                self.plan = self.astar_search(start, closest_food, walls, grid_size, tile_facts=tile_facts)
 
         if self.plan:
             return self.plan.pop(0)
@@ -55,9 +67,15 @@ class SearchAgent:
         return math.sqrt((pos[0] - goal[0])**2 + (pos[1] - goal[1])**2)
 
     # ==========================================
-    # LAB 4: A* SEARCH ALGORITHM
+    # LAB 4: A* SEARCH ALGORITHM (Enhanced with Lab 7 Feasibility)
     # ==========================================
-    def astar_search(self, start, goal, walls, grid_size, heuristic_type='manhattan'):
+    def astar_search(self, start, goal, walls, grid_size, heuristic_type='manhattan', tile_facts=None):
+        if isinstance(heuristic_type, dict) and tile_facts is None:
+            tile_facts = heuristic_type
+            heuristic_type = 'manhattan'
+        if tile_facts is None:
+            tile_facts = {}
+
         count = 0 # Tie-breaker to prevent heapq crashes
         
         # Initial costs
@@ -79,6 +97,16 @@ class SearchAgent:
                 reached[curr_pos] = g
                 
                 for action, next_pos in self.get_successors(curr_pos, walls, grid_size):
+                    # LAB 7: Consult Knowledge Base before adding neighbor to open list
+                    self.kb.clear_facts()
+                    for fact in tile_facts.get(next_pos, []):
+                        self.kb.tell_fact(fact)
+                    self.kb.forward_chain()
+
+                    # If Retreat is deduced, mark tile as Infeasible (skip it)
+                    if 'Retreat' in self.kb.facts:
+                        continue
+
                     new_g = g + 1
                     
                     if next_pos not in reached or new_g < reached[next_pos]:
